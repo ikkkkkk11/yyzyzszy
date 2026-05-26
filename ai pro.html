@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI PPT 智能插件（语音+翻译+文化注释）</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+        }
+        body {
+            background: #f5f7fa;
+            padding: 20px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            padding: 16px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        textarea {
+            width: 100%;
+            height: 90px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            resize: none;
+            margin: 8px 0;
+        }
+        button {
+            background: #2d8cf0;
+            color: white;
+            border: none;
+            padding: 10px;
+            width: 100%;
+            border-radius: 6px;
+            font-size: 15px;
+            margin: 4px 0;
+            cursor: pointer;
+        }
+        .voice-btn {
+            background: #00b42a;
+        }
+        .result {
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 6px;
+            margin-top: 8px;
+            font-size: 14px;
+            line-height: 1.6;
+            min-height: 50px;
+            white-space: pre-wrap;
+        }
+        h3 {
+            margin: 0 0 8px 0;
+            color: #333;
+            font-size: 16px;
+        }
+        .status {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h3>📝 PPT 文本 / 语音输入</h3>
+    <textarea id="inputText" placeholder="粘贴英文文本 或 点击语音按钮朗读英文..."></textarea>
+    
+    <button onclick="startAI()">🚀 翻译 + 文化/专业注释</button>
+    <button class="voice-btn" onclick="toggleVoice()">🎤 实时语音输入</button>
+    <p class="status" id="voiceStatus">语音：未开启</p>
+</div>
+
+<div class="card">
+    <h3>🌍 中文翻译结果</h3>
+    <div id="transResult" class="result">等待输入...</div>
+</div>
+
+<div class="card">
+    <h3>📖 文化/专业知识注释</h3>
+    <div id="noteResult" class="result">等待AI解析...</div>
+</div>
+
+<script>
+// 通义千问密钥
+const QWEN_API_KEY = "sk-5cc227a711b1489b8d37082d1f0f731e";
+const API_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation";
+
+// 语音识别
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListening = false;
+
+// 主执行函数：文本/语音统一处理
+async function startAI() {
+    const text = document.getElementById("inputText").value.trim();
+    if (!text) {
+        alert("请先输入英文内容，或使用语音朗读");
+        return;
+    }
+
+    const mainBtn = document.querySelectorAll("button")[0];
+    mainBtn.disabled = true;
+    mainBtn.innerText = "处理中...";
+
+    document.getElementById("transResult").innerText = "翻译中...";
+    document.getElementById("noteResult").innerText = "AI解析知识点中...";
+
+    try {
+        const resStr = await qwenProcess(text);
+        // 按分隔符拆分翻译和注释
+        const splitArr = resStr.split("|||");
+        const trans = splitArr[0] ? splitArr[0].trim() : "翻译失败";
+        const note = splitArr[1] ? splitArr[1].trim() : "暂无文化/专业注释";
+
+        document.getElementById("transResult").innerText = trans;
+        document.getElementById("noteResult").innerText = note;
+    } catch (e) {
+        document.getElementById("transResult").innerText = "调用失败";
+        document.getElementById("noteResult").innerText = "错误：" + e.message;
+    } finally {
+        mainBtn.disabled = false;
+        mainBtn.innerText = "🚀 翻译 + 文化/专业注释";
+    }
+}
+
+// 调用通义千问：强制英译中 + 补充文化/专业背景
+async function qwenProcess(content) {
+    const prompt = `
+请严格按照要求处理这段英文内容，分两部分输出，两部分内容必须用符号 ||| 隔开，不要额外添加多余文字：
+第一部分：将英文完整、通顺地翻译成标准简体中文；
+第二部分：结合跨文化教学场景，详细解读这句话包含的**文化背景、地域习俗、社交礼仪或相关专业知识点**。
+
+待处理英文内容：
+${content}
+`;
+
+    const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${QWEN_API_KEY}`
+        },
+        body: JSON.stringify({
+            model: "qwen-turbo",
+            input: {
+                messages: [
+                    { role: "user", content: prompt }
+                ]
+            },
+            parameters: {
+                result_format: "text"
+            }
+        })
+    });
+
+    const data = await response.json();
+    if (data.output && data.output.text) {
+        return data.output.text;
+    }
+    throw new Error("AI接口返回异常");
+}
+
+// 语音开关：固定识别英文
+function toggleVoice() {
+    if (!Recognition) {
+        alert("当前浏览器不支持语音识别，请使用Chrome/Edge");
+        return;
+    }
+
+    if (isListening) {
+        recognition.stop();
+        isListening = false;
+        document.getElementById("voiceStatus").innerText = "语音：已停止";
+        document.querySelector(".voice-btn").innerText = "🎤 实时语音输入";
+    } else {
+        recognition = new Recognition();
+        recognition.lang = "en-US";  // 固定识别英文
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        // 语音结果实时写入输入框
+        recognition.onresult = function(e) {
+            let voiceText = "";
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                voiceText += e.results[i][0].transcript;
+            }
+            document.getElementById("inputText").value = voiceText;
+        };
+
+        recognition.start();
+        isListening = true;
+        document.getElementById("voiceStatus").innerText = "语音：正在聆听英文...";
+        document.querySelector(".voice-btn").innerText = "⏹ 停止语音";
+    }
+}
+</script>
+</body>
+</html>
